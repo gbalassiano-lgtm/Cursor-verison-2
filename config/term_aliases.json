@@ -1790,6 +1790,87 @@
       "valueFlash": "Stars League",
       "canonical": "Iraqi League",
       "decidedAt": "2026-08-19T11:32:10.899Z"
+    },
+    {
+      "sport": "football",
+      "type": "name",
+      "scope": "Bahrain",
+      "value365": "Ali Csc / Manama Club",
+      "valueFlash": "Aali Club / Manama Club",
+      "canonical": "Ali Csc / Manama Club",
+      "decidedAt": "2026-08-29T11:12:17.558Z"
+    },
+    {
+      "sport": "football",
+      "type": "name",
+      "scope": "Bolivia",
+      "value365": "1 de Mayo FC / Unión Tarija",
+      "valueFlash": "1 de Mayo / Central Union",
+      "canonical": "1 de Mayo FC / Unión Tarija",
+      "decidedAt": "2026-08-29T11:22:20.885Z"
+    },
+    {
+      "sport": "football",
+      "type": "name",
+      "scope": "Iraq",
+      "value365": "Al Garaf / Gas Alshimal",
+      "valueFlash": "Al Gharraf / Ghaz Al Shamal",
+      "canonical": "Al Garaf / Gas Alshimal",
+      "decidedAt": "2026-08-29T11:22:20.886Z"
+    },
+    {
+      "sport": "football",
+      "type": "name",
+      "scope": "Israel",
+      "value365": "Maccabi Hertzliya / Hapoel Kfar Saba",
+      "valueFlash": "M. Herzliya / Hapoel Kfar Saba",
+      "canonical": "Maccabi Hertzliya / Hapoel Kfar Saba",
+      "decidedAt": "2026-08-29T11:22:20.887Z"
+    },
+    {
+      "sport": "football",
+      "type": "competition",
+      "scope": "Israel",
+      "value365": "National League",
+      "valueFlash": "Leumit League",
+      "canonical": "National League",
+      "decidedAt": "2026-08-29T11:22:20.888Z"
+    },
+    {
+      "sport": "football",
+      "type": "name",
+      "scope": "Nigeria",
+      "value365": "Enugu Rangers / Katsina United",
+      "valueFlash": "Rangers Int'l / Katsina Utd",
+      "canonical": "Enugu Rangers / Katsina United",
+      "decidedAt": "2026-08-29T11:22:20.890Z"
+    },
+    {
+      "sport": "football",
+      "type": "name",
+      "scope": "Saudi Arabia",
+      "value365": "Al Hazm / Al Shabab Riyadh",
+      "valueFlash": "Al Hazem / Al Shabab",
+      "canonical": "Al Hazm / Al Shabab Riyadh",
+      "decidedAt": "2026-08-29T11:22:20.890Z"
+    },
+    {
+      "sport": "football",
+      "type": "name",
+      "scope": "Serbia",
+      "value365": "IMT Belgrad / Mladost Lucani",
+      "valueFlash": "IMT Novi Beograd / Mladost",
+      "canonical": "IMT Belgrad / Mladost Lucani",
+      "decidedAt": "2026-08-29T11:22:20.891Z"
+    },
+    {
+      "sport": "football",
+      "type": "name",
+      "scope": "Ukraine",
+      "value365": "FK Kulykiv Bilka / Ahrobiznes",
+      "valueFlash": "Kulikiv / Ahrobiznes Volochysk",
+      "canonical": "FK Kulykiv Bilka / Ahrobiznes",
+      "decidedAt": "2026-08-29T11:22:20.892Z"
     }
   ],
   "rejected": [

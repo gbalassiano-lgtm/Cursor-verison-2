@@ -22,6 +22,11 @@ const {
 const MOBILE_STIME_SOURCE_TZ = ISRAEL_SCAN_TIMEZONE;
 
 const API_BASE_URL = 'https://mobileapi.365scores.com/Data/Games/';
+// Global mobile/web day feeds cap ~839 games; major Americas evening slates (MLS, etc.)
+// often fall off. Competition-scoped webws fetches are used to backfill priority leagues.
+const WEB_API_BASE_URL = 'https://webws.365scores.com/web/games/';
+const WEB_BACKFILL_CHUNK_SIZE = Number(process.env.API_365_WEB_BACKFILL_CHUNK || 25);
+const FOOTBALL_POPULARITY_FILE = path.join(__dirname, '..', 'config', 'football_popularity_priority.json');
 const TIMEZONE = resolveScanTimezone();
 const TIME_FORMATTER = new Intl.DateTimeFormat('en-GB', {
   timeZone: TIMEZONE,
@@ -337,6 +342,178 @@ async function fetch365ScoresGames(sportTypeId, startDate, endDate = startDate) 
   throw new Error(`365Scores API request failed: ${formatApiError(lastError)}`);
 }
 
+function loadPriorityCompetitionIds(sportKey = '') {
+  if (sportKey !== 'football') return [];
+  try {
+    const raw = JSON.parse(fs.readFileSync(FOOTBALL_POPULARITY_FILE, 'utf8'));
+    const ids = (raw.competitions || [])
+      .map(entry => Number(entry.id))
+      .filter(id => Number.isFinite(id) && id > 0);
+    return [...new Set(ids)];
+  } catch (error) {
+    console.log(`WARN: could not load priority competitions for web backfill (${formatApiError(error)})`);
+    return [];
+  }
+}
+
+function chunkArray(items, size) {
+  const out = [];
+  for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
+  return out;
+}
+
+function makeWebCompetitionApiUrl(competitionIds, startDate, endDate = startDate) {
+  const params = new URLSearchParams({
+    lang: '1',
+    timezoneName: TIMEZONE,
+    userCountryId: '21',
+    appTypeId: '5',
+    competitions: competitionIds.join(','),
+    startDate: apiDate(startDate),
+    endDate: apiDate(endDate),
+    onlyMajorGames: 'false',
+  });
+  return `${WEB_API_BASE_URL}?${params.toString()}`;
+}
+
+function webGameStatus(game = {}) {
+  const hint = String(game.statusText || game.shortStatusText || '').toLowerCase();
+  if (/\b(postponed|post\.?|adiado)\b/.test(hint)) return 'postponed';
+  if (/\b(cancelled|canceled|canc\.?|cancelado)\b/.test(hint)) return 'cancelled';
+  if (/\b(suspended|suspenso|interrompido)\b/.test(hint)) return 'suspended';
+  if (/\b(ended|finished|ft|aet|pen)\b/.test(hint) || Number(game.statusGroup) === 4) return 'ended';
+  if (/\b(live|1st|2nd|ht|break)\b/.test(hint) || Number(game.statusGroup) === 3) return 'live';
+  return 'scheduled';
+}
+
+function normalizeWebApiPayload(json = {}) {
+  const countries = (json.countries || []).map(country => ({
+    id: country.id,
+    name: country.name,
+  }));
+  const competitions = (json.competitions || []).map(competition => ({
+    id: competition.id,
+    name: competition.name,
+    countryId: competition.countryId,
+  }));
+  const games = (json.games || []).map(game => {
+    const home = game.homeCompetitor || null;
+    const away = game.awayCompetitor || null;
+    const startTime = game.startTime || null;
+    return {
+      id: game.id,
+      startTime,
+      // Web startTime already carries the requested timezone offset.
+      mobileDateKey: formatDateKey(startTime),
+      mobileTime: formatTime(startTime),
+      competitionId: game.competitionId,
+      statusText: webGameStatus(game),
+      homeCompetitor: home
+        ? { name: home.name, shortName: home.shortName || home.symbolicName || home.name }
+        : null,
+      awayCompetitor: away
+        ? { name: away.name, shortName: away.shortName || away.symbolicName || away.name }
+        : null,
+      competitors: [home, away].filter(Boolean).map(comp => ({
+        name: comp.name,
+        shortName: comp.shortName || comp.symbolicName || comp.name,
+      })),
+      stageName: cleanText(game.roundName || ''),
+    };
+  });
+
+  return { countries, competitions, games };
+}
+
+function mergeNormalizedPayloads(base = {}, extra = {}) {
+  const countriesById = new Map((base.countries || []).map(country => [country.id, country]));
+  for (const country of extra.countries || []) {
+    if (!countriesById.has(country.id)) countriesById.set(country.id, country);
+  }
+
+  const competitionsById = new Map((base.competitions || []).map(competition => [competition.id, competition]));
+  for (const competition of extra.competitions || []) {
+    if (!competitionsById.has(competition.id)) competitionsById.set(competition.id, competition);
+  }
+
+  const gamesById = new Map();
+  for (const game of base.games || []) {
+    if (game?.id == null) continue;
+    gamesById.set(String(game.id), game);
+  }
+  let added = 0;
+  for (const game of extra.games || []) {
+    if (game?.id == null) continue;
+    const key = String(game.id);
+    if (gamesById.has(key)) continue;
+    gamesById.set(key, game);
+    added += 1;
+  }
+
+  return {
+    countries: [...countriesById.values()],
+    competitions: [...competitionsById.values()],
+    games: [...gamesById.values()],
+    _backfillAdded: added,
+  };
+}
+
+async function fetch365WebGamesByCompetitions(competitionIds, startDate, endDate = startDate) {
+  const ids = [...new Set((competitionIds || []).map(Number).filter(id => Number.isFinite(id) && id > 0))];
+  if (!ids.length) {
+    return { countries: [], competitions: [], games: [], _backfillAdded: 0 };
+  }
+
+  let merged = { countries: [], competitions: [], games: [] };
+  for (const chunk of chunkArray(ids, Math.max(1, WEB_BACKFILL_CHUNK_SIZE))) {
+    const url = makeWebCompetitionApiUrl(chunk, startDate, endDate);
+    console.log(`365Scores web backfill (${chunk.length} comps): ${url}`);
+
+    let lastError;
+    let normalized = null;
+    for (let attempt = 1; attempt <= API_FETCH_MAX_ATTEMPTS; attempt++) {
+      try {
+        const raw = await fetch365ScoresGamesOnce(url);
+        normalized = normalizeWebApiPayload(raw);
+        break;
+      } catch (error) {
+        lastError = error;
+        if (attempt < API_FETCH_MAX_ATTEMPTS) {
+          console.log(
+            `WARN: 365Scores web backfill attempt ${attempt}/${API_FETCH_MAX_ATTEMPTS} failed (${formatApiError(error)}). Retrying...`
+          );
+          await new Promise(resolve => setTimeout(resolve, attempt * 2000));
+        }
+      }
+    }
+    if (!normalized) {
+      console.log(`WARN: 365Scores web backfill chunk skipped (${formatApiError(lastError)})`);
+      continue;
+    }
+    merged = mergeNormalizedPayloads(merged, normalized);
+  }
+
+  return merged;
+}
+
+async function fetch365ScoresGamesWithPriorityBackfill(sportTypeId, sportKey, startDate, endDate, targetDate) {
+  const mobile = await fetch365ScoresGames(sportTypeId, startDate, endDate);
+  const priorityIds = loadPriorityCompetitionIds(sportKey);
+  if (!priorityIds.length) return mobile;
+
+  const web = await fetch365WebGamesByCompetitions(priorityIds, targetDate, targetDate);
+  const merged = mergeNormalizedPayloads(mobile, web);
+  if (merged._backfillAdded) {
+    console.log(
+      `365Scores web backfill added ${merged._backfillAdded} games missing from the capped mobile day feed.`
+    );
+  } else {
+    console.log('365Scores web backfill: no extra priority games beyond the mobile feed.');
+  }
+  delete merged._backfillAdded;
+  return merged;
+}
+
 function shouldIncludeGameForScan(gameDateKey, targetDate) {
   return gameBelongsToScanTarget(gameDateKey, targetDate);
 }
@@ -523,10 +700,12 @@ async function run365ApiScraper(config) {
   console.log(`Date: ${targetDate} (${TIMEZONE})`);
 
   const { startDate, endDate } = apiFetchWindow(targetDate);
-  const json = await fetch365ScoresGames(
+  const json = await fetch365ScoresGamesWithPriorityBackfill(
     sportTypeId,
+    config.sportKey,
     startDate,
-    endDate
+    endDate,
+    targetDate
   );
   const rows = dedupe365Rows(
     parseGames(json, { sportKey: config.sportKey, targetDate }),
@@ -555,9 +734,15 @@ module.exports = {
   parseGames,
   dedupe365Rows,
   fetch365ScoresGames,
+  fetch365ScoresGamesWithPriorityBackfill,
+  fetch365WebGamesByCompetitions,
   formatApiError,
   makeMobileApiUrl,
+  makeWebCompetitionApiUrl,
   normalizeMobileApiPayload,
+  normalizeWebApiPayload,
+  mergeNormalizedPayloads,
+  loadPriorityCompetitionIds,
   parseMobileSTimeParts,
   mobileGameStatus,
 };
